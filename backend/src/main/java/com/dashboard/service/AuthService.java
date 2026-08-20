@@ -1,0 +1,237 @@
+package com.dashboard.service;
+
+import com.dashboard.dto.request.LoginRequest;
+import com.dashboard.dto.request.RegisterRequest;
+import com.dashboard.dto.request.SellerRegisterRequest;
+import com.dashboard.dto.response.AuthResponse;
+import com.dashboard.entity.User;
+import com.dashboard.exception.BadRequestException;
+import com.dashboard.exception.AccountDeactivatedException;
+import com.dashboard.repository.UserRepository;
+import com.dashboard.repository.BannedEmailRepository;
+import com.dashboard.security.JwtTokenProvider;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Map;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AuthService {
+
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final AuthenticationManager authenticationManager;
+    private final JwtTokenProvider jwtTokenProvider;
+    private final BannedEmailRepository bannedEmailRepository;
+
+    private static final String DEACTIVATION_MESSAGE = "Your account has been deactivated for violating platform policies.";
+
+    @Transactional
+    public AuthResponse register(RegisterRequest request) {
+        if (bannedEmailRepository.existsByEmail(request.getEmail())) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new BadRequestException("Email already in use");
+        }
+
+        User.Role role;
+        try {
+            role = User.Role.valueOf(request.getRole().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            role = User.Role.BUYER;
+        }
+
+        if (role == User.Role.ADMIN) {
+            throw new BadRequestException("Cannot register as admin");
+        }
+
+        User.UserBuilder userBuilder = User.builder()
+                .email(request.getEmail())
+                .password(passwordEncoder.encode(request.getPassword()))
+                .fullName(request.getFullName())
+                .role(role)
+                .securityQuestion(request.getSecurityQuestion())
+                .securityAnswer(passwordEncoder.encode(request.getSecurityAnswer().toLowerCase()));
+
+        if (role == User.Role.SELLER && request.getStoreName() != null && ! request.getStoreName().trim().isEmpty()) {
+            userBuilder.storeName(request.getStoreName().trim());
+            userBuilder.isVerifiedSeller(false);
+        }
+
+        User user = userBuilder.build();
+        user = userRepository.save(user);
+
+        log.info("User registered:  {} with role {}, storeName: {}",
+                user.getEmail(), user.getRole(), user.getStoreName());
+
+        String token = jwtTokenProvider.generateToken(user.getEmail(), user.getRole().name());
+
+        return AuthResponse.builder()
+                .token(token)
+                .type("Bearer")
+                .id(user.getId())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .role(user.getRole().name())
+                .storeName(user.getStoreName())
+                .isVerifiedSeller(user.getIsVerifiedSeller())
+                .build();
+    }
+
+    @Transactional
+    public AuthResponse registerSeller(SellerRegisterRequest request) {
+        if (bannedEmailRepository.existsByEmail(request.getEmail())) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new BadRequestException("Email already in use");
+        }
+
+        User user = User.builder()
+                .email(request.getEmail())
+                .password(passwordEncoder.encode(request.getPassword()))
+                .fullName(request.getFullName())
+                .phone(request.getPhone())
+                .role(User.Role.SELLER)
+                .storeName(request.getStoreName())
+                .storeDescription(request.getStoreDescription())
+                .businessAddress(request.getBusinessAddress())
+                .securityQuestion(request.getSecurityQuestion())
+                .securityAnswer(passwordEncoder.encode(request.getSecurityAnswer().toLowerCase()))
+                .isVerifiedSeller(false)
+                .build();
+
+        user = userRepository.save(user);
+        log.info("Seller registered: {} - Store: {}", user.getEmail(), user.getStoreName());
+
+        String token = jwtTokenProvider.generateToken(user.getEmail(), user.getRole().name());
+
+        return AuthResponse.builder()
+                .token(token)
+                .type("Bearer")
+                .id(user.getId())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .role(user.getRole().name())
+                .storeName(user.getStoreName())
+                .isVerifiedSeller(false)
+                .build();
+    }
+
+    public AuthResponse login(LoginRequest request) {
+        if (bannedEmailRepository.existsByEmail(request.getEmail())) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new BadRequestException("Invalid email or password"));
+
+        if (!user.getIsActive()) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        if (user.getRole() != User.Role.ADMIN) {
+            throw new BadRequestException("Invalid email or password");
+        }
+
+        Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+        );
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        String token = jwtTokenProvider.generateToken(user.getEmail(), user.getRole().name());
+
+        log.info("User logged in: {}", user.getEmail());
+
+        return AuthResponse.builder()
+                .token(token)
+                .type("Bearer")
+                .id(user.getId())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .role(user.getRole().name())
+                .storeName(user.getStoreName())
+                .isVerifiedSeller(user.getIsVerifiedSeller())
+                .build();
+    }
+
+    public Map<String, String> getSecurityQuestion(String email) {
+        if (bannedEmailRepository.existsByEmail(email)) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BadRequestException("User not found with this email"));
+
+        return Map.of("securityQuestion", user.getSecurityQuestion());
+    }
+
+    @Transactional
+    public void resetPassword(String email, String securityAnswer, String newPassword) {
+        if (bannedEmailRepository.existsByEmail(email)) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BadRequestException("User not found"));
+
+        if (!passwordEncoder.matches(securityAnswer.toLowerCase(), user.getSecurityAnswer())) {
+            throw new BadRequestException("Incorrect security answer");
+        }
+
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        log.info("Password reset for user: {}", email);
+    }
+
+    public AuthResponse refreshToken() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        String email = authentication.getName();
+
+        if (bannedEmailRepository.existsByEmail(email)) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BadRequestException("User not found"));
+
+        if (!user.getIsActive()) {
+            throw new AccountDeactivatedException(DEACTIVATION_MESSAGE);
+        }
+
+        String token = jwtTokenProvider.generateToken(user.getEmail(), user.getRole().name());
+
+        return AuthResponse.builder()
+                .token(token)
+                .type("Bearer")
+                .id(user.getId())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .role(user.getRole().name())
+                .storeName(user.getStoreName())
+                .isVerifiedSeller(user.getIsVerifiedSeller())
+                .build();
+    }
+
+    public User getCurrentUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        String email = authentication.getName();
+
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new BadRequestException("User not found"));
+    }
+}

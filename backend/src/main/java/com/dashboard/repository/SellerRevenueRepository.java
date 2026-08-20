@@ -1,0 +1,63 @@
+package com.dashboard.repository;
+
+import com.dashboard.entity.SellerRevenue;
+import com.dashboard.entity.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+
+@Repository
+public interface SellerRevenueRepository extends JpaRepository<SellerRevenue, Long> {
+
+    @Query("SELECT COALESCE(SUM(sr.netAmount), 0) FROM SellerRevenue sr WHERE sr.seller = :seller")
+    BigDecimal calculateTotalRevenueBySeller(@Param("seller") User seller);
+
+    @Modifying
+    @Query("DELETE FROM SellerRevenue s WHERE s.seller.id = :sellerId")
+    void deleteBySellerId(@Param("sellerId") Long sellerId);
+
+    @Query("SELECT COALESCE(SUM(sr.netAmount), 0) FROM SellerRevenue sr WHERE sr.seller = :seller AND sr.revenueDate BETWEEN :startDate AND :endDate")
+    BigDecimal calculateRevenueBetweenDates(
+            @Param("seller") User seller,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("SELECT COALESCE(SUM(sr.netAmount), 0) FROM SellerRevenue sr WHERE sr.seller.id = :sellerId AND sr.revenueDate = :date")
+    BigDecimal calculateDailyRevenue(@Param("sellerId") Long sellerId, @Param("date") LocalDate date);
+
+    @Query("SELECT COALESCE(SUM(sr.quantitySold), 0) FROM SellerRevenue sr WHERE sr.seller = :seller")
+    Long countTotalUnitsSold(@Param("seller") User seller);
+
+    @Query("SELECT sr.revenueDate, SUM(sr.netAmount) FROM SellerRevenue sr WHERE sr.seller = :seller AND sr.revenueDate BETWEEN :startDate AND :endDate GROUP BY sr.revenueDate ORDER BY sr.revenueDate")
+    List<Object[]> getDailyRevenueBreakdown(
+            @Param("seller") User seller,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("SELECT sr.product.asin, sr.product.productName, SUM(sr.quantitySold), SUM(sr.netAmount) FROM SellerRevenue sr WHERE sr.seller = :seller GROUP BY sr.product.asin, sr.product.productName ORDER BY SUM(sr.netAmount) DESC")
+    List<Object[]> getProductRevenueBreakdown(@Param("seller") User seller, Pageable pageable);
+
+    @Query("SELECT COALESCE(SUM(sr.grossAmount), 0) FROM SellerRevenue sr")
+    BigDecimal calculateTotalPlatformRevenue();
+
+    @Query("SELECT sr.seller. id, sr.seller. fullName, sr.seller.storeName, " +
+            "COALESCE(SUM(sr.grossAmount), 0), " +
+            "COALESCE(SUM(sr. quantitySold), 0), " +
+            "COUNT(DISTINCT sr.order.id) " +
+            "FROM SellerRevenue sr " +
+            "GROUP BY sr.seller. id, sr.seller.fullName, sr.seller.storeName " +
+            "ORDER BY SUM(sr.grossAmount) DESC")
+    List<Object[]> getTopSellersByRevenue(Pageable pageable);
+
+    boolean existsByOrderItemId(Long orderItemId);
+}

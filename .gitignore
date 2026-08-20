@@ -1,0 +1,26 @@
+# Local secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Build and dependency output
+backend/target/
+frontend/Main/node_modules/
+frontend/Main/dist/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE and operating-system state
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Database exports and recovery material must stay local
+*.sql
+*.dump
+*.backup

@@ -1,0 +1,213 @@
+package com.dashboard.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+@Entity
+@Table(name = "products", indexes = {
+        @Index(name = "idx_product_name", columnList = "product_name"),
+        @Index(name = "idx_category", columnList = "category_id"),
+        @Index(name = "idx_ranking", columnList = "ranking"),
+        @Index(name = "idx_rating", columnList = "rating"),
+        @Index(name = "idx_sales_count", columnList = "sales_count"),
+        @Index(name = "idx_seller", columnList = "seller_id"),
+        @Index(name = "idx_approval_status", columnList = "approval_status")
+})
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class Product {
+
+    @Id
+    @Column(length = 20)
+    private String asin;
+
+    @Column(name = "product_name", nullable = false, length = 500)
+    private String productName;
+
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
+    @Column(precision = 10, scale = 2)
+    private BigDecimal price;
+
+    @Column(precision = 2, scale = 1)
+    private BigDecimal rating;
+
+    @Column(name = "reviews_count")
+    @Builder.Default
+    private Integer reviewsCount = 0;
+
+    @Column(name = "ranking")
+    private Integer ranking;
+
+    @Column(name = "no_of_sellers")
+    private Integer noOfSellers;
+
+    @Column(name = "product_link", columnDefinition = "TEXT")
+    private String productLink;
+
+    @Column(name = "image_url", columnDefinition = "TEXT")
+    private String imageUrl;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private Category category;
+
+    @Column(name = "is_bestseller")
+    @Builder.Default
+    private Boolean isBestseller = false;
+
+    @Column(name = "likes_count")
+    @Builder.Default
+    private Integer likesCount = 0;
+
+    @Column(name = "dislikes_count")
+    @Builder.Default
+    private Integer dislikesCount = 0;
+
+    @Column(name = "sales_count")
+    @Builder.Default
+    private Integer salesCount = 0;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "seller_id")
+    private User seller;
+
+    @Column(name = "stock_quantity", nullable = false)
+    @Builder.Default
+    private Integer stockQuantity = 0;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "approval_status", length = 20)
+    @Builder.Default
+    private ApprovalStatus approvalStatus = ApprovalStatus.APPROVED;
+
+    @Column(name = "submitted_at")
+    private LocalDateTime submittedAt;
+
+    @Column(name = "approved_at")
+    private LocalDateTime approvedAt;
+
+    @Column(name = "approved_by")
+    private Long approvedBy;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<ProductReview> reviews = new ArrayList<>();
+
+    @Column(name = "review_count")
+    private Integer reviewCount;
+
+    @Column(name = "discount_percentage")
+    private Double discountPercentage;
+
+    @Column(name = "days_since_listed")
+    private Integer daysSinceListed;
+
+    @Transient
+    public Integer getDaysSinceListed() {
+        if (this.createdAt == null) {
+            return 30;
+        }
+        return (int) java.time.temporal.ChronoUnit.DAYS.between(
+                this.createdAt,
+                java.time.LocalDateTime.now()
+        );
+    }
+
+    public void incrementSalesCount(int quantity) {
+        if (this.salesCount == null) {
+            this.salesCount = 0;
+        }
+        this.salesCount += quantity;
+    }
+
+    public boolean isInStock() {
+        return stockQuantity != null && stockQuantity > 0;
+    }
+
+    public boolean hasEnoughStock(int requestedQuantity) {
+        return stockQuantity != null && stockQuantity >= requestedQuantity;
+    }
+
+
+    public void reduceStock(int quantity) {
+        if (this.stockQuantity == null) {
+            this.stockQuantity = 0;
+        }
+        this.stockQuantity = Math.max(0, this.stockQuantity - quantity);
+    }
+
+
+    public void addStock(int quantity) {
+        if (this.stockQuantity == null) {
+            this.stockQuantity = 0;
+        }
+        this.stockQuantity += quantity;
+    }
+
+
+    public void decrementStock(int quantity) {
+        if (this.stockQuantity == null) {
+            this.stockQuantity = 0;
+        }
+        this.stockQuantity = Math.max(0, this.stockQuantity - quantity);
+    }
+    public String getSellerName() {
+        if (this.seller != null) {
+            return this.seller.getStoreName() != null
+                    ? this.seller.getStoreName()
+                    : this.seller.getFullName();
+        } else {
+            return "Irys Store";
+        }
+    }
+
+
+    public boolean isMouadVisionProduct() {
+        return this.seller == null;
+    }
+
+
+    @PrePersist
+    @PreUpdate
+    public void updateBestsellerStatus() {
+        boolean highRanking = this.ranking != null && this.ranking <= 10;
+        boolean highSales = this.salesCount != null && this.salesCount >= 50;
+        this.isBestseller = highRanking || highSales;
+    }
+
+    public enum ApprovalStatus {
+        PENDING("En attente d'approbation"),
+        APPROVED("Approuvé"),
+        REJECTED("Rejeté");
+
+        private final String description;
+
+        ApprovalStatus(String description) {
+            this.description = description;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+    }
+}
